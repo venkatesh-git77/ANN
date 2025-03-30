@@ -1,70 +1,46 @@
-import numpy as np
+# app.py
+from flask import Flask, request, jsonify
 import pandas as pd
-import tensorflow as tf
-from sklearn.preprocessing import StandardScaler,LabelEncoder,OneHotEncoder
-import streamlit as st
-import pickle
+import numpy as np
+import joblib
 
-#load training mode
-#with open('model.h5','rb') as file:
- #   model = pickle.load(file)
-model =  tf.keras.models.load_model('model.keras')
+app = Flask(__name__)
 
-with open('one_hot_encoder_geography.pkl','rb') as file:
-    one_hot_encoder_geography = pickle.load(file)
+# Load the trained model, scaler, and feature columns
+model = joblib.load('churn_model.pkl')
+scaler = joblib.load('sc_scaler.pkl')
+feature_columns = joblib.load('feature_columns.pkl')
 
-with open('label_encoder_gender.pkl','rb') as file:
-    label_encoder_gender = pickle.load(file)
+@app.route('/predict', methods=['POST'])
+def predict():
+    try:
+        # Get data from the POST request
+        data = request.json
 
-with open('scaler.pkl','rb') as file:
-    scaler = pickle.load(file)
+        # Convert input data to DataFrame
+        input_df = pd.DataFrame([data['features']], columns=feature_columns[:len(data['features'])])
+        print(input_df.columns())
 
+        # Add missing columns if necessary
+        for col in feature_columns:
+            if col not in input_df.columns:
+                input_df[col] = 0  # Add missing columns with default value 0
 
-## streamlit app
-st.title('Customer Churn predection')
-geography = st.selectbox('Geography', one_hot_encoder_geography.categories_[0])
-gender = st.selectbox('Gender', label_encoder_gender.classes_)
-age = st.slider('Age', 18, 92)
-balance = st.number_input('Balance')
-credit_score = st.number_input('Credit Score')
-estimated_salary = st.number_input('Estimated Salary')
-tenure = st.slider('Tenure', 0, 10)
-num_of_products = st.slider('Number of Products', 1, 4)
-has_cr_card = st.selectbox('Has Credit Card', [0, 1])
-is_active_member = st.selectbox('Is Active Member', [0, 1])
+        # Reorder columns to match training data order
+        input_df = input_df[feature_columns]
 
-# Prepare the input data
-input_data = pd.DataFrame({
-    'CreditScore': [credit_score],
-    'Gender': [label_encoder_gender.transform([gender])[0]],
-    'Age': [age],
-    'Tenure': [tenure],
-    'Balance': [balance],
-    'NumOfProducts': [num_of_products],
-    'HasCrCard': [has_cr_card],
-    'IsActiveMember': [is_active_member],
-    'EstimatedSalary': [estimated_salary]
-})
+        # Scale the input data
+        scaled_data = scaler.transform(input_df)
 
+        # Make prediction
+        prediction = model.predict(scaled_data)
 
-# One-hot encode 'Geography'
-geo_encoded = one_hot_encoder_geography.transform([[geography]]).toarray()
-geo_encoded_df = pd.DataFrame(geo_encoded, columns= one_hot_encoder_geography.get_feature_names_out(['Geography']))
+        # Return result as JSON
+        result = {'prediction': int(prediction[0])}
+        return jsonify(result)
 
-# Combine one-hot encoded columns with input data
-input_data = pd.concat([input_data.reset_index(drop=True), geo_encoded_df], axis=1)
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
-# Scale the input data
-input_data_scaled = scaler.transform(input_data)
-
-
-# Predict churn
-prediction = model.predict(input_data_scaled)
-prediction_proba = prediction[0][0]
-
-st.write(f'Churn Probability: {prediction_proba:.2f}')
-
-if prediction_proba > 0.5:
-    st.write('The customer is likely to churn.')
-else:
-    st.write('The customer is not likely to churn.')
+if __name__ == '__main__':
+    app.run(debug=True)
